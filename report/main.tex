@@ -28,6 +28,8 @@
 % ----------------------------
 \usepackage{geometry}    % 页面边距控制
 \geometry{left=1in, right=1in, top=1in, bottom=1in}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0pt}
 
 \usepackage{longtable}   % 支持长表格
 \usepackage{graphicx}    % 插入图片
@@ -143,17 +145,11 @@
 
 \section{实验目的}
 
-这次实验用 NumPy 写出 OpenCLIP ViT-B/32 图像编码器的前向计算。模型参数、图像预处理和数值辅助函数由课程提供，不训练，也不涉及 GPU、PyTorch 和网络：输入是预处理后的图像 batch，输出是每张图一个 512 维单位向量。要做的是补全 \texttt{image\_encoder.py} 中的 TODO-01 至 TODO-06，把 $[B,3,224,224]$ 算到 $[B,512]$；用分阶段检查脚本定位错误，直到 8 个阶段全部通过；记录各阶段误差，复盘实现中改掉的问题。
+用 NumPy 实现 OpenCLIP ViT-B/32 的图像编码器前向：补全 \texttt{image\_encoder.py} 的 TODO-01 至 TODO-06，把 $[B,3,224,224]$ 算成每张图一个 512 维单位向量。参数、预处理和数值辅助函数由课程提供，不训练，不用 GPU 和 PyTorch。验收看四点：形状一致、类型为 \texttt{float32}、数值有限、逐元素误差满足 $|\hat{y}-y|\le \mathrm{atol}+\mathrm{rtol}\,|y|$；内部 token 取 $\mathrm{atol}=2\times10^{-4}$，输出取 $2\times10^{-5}$，$\mathrm{rtol}=2\times10^{-4}$，输出每行长度还要为 1。
 
-验收由 \texttt{check.py} 判定，条件是四条：形状与参考一致；类型必须是 \texttt{float32}；数值有限；逐元素满足
-\begin{equation}
-|\hat{y}-y|\le \mathrm{atol}+\mathrm{rtol}\cdot|y| .
-\end{equation}
-内部 token 取 $\mathrm{atol}=2\times10^{-4}$，最终输出和 batch 检查取 $\mathrm{atol}=2\times10^{-5}$，$\mathrm{rtol}$ 统一为 $2\times10^{-4}$，输出每行的 L2 长度还要等于 1。
+\section{实现}
 
-\section{模型结构与数据流}
-
-模型是 12 层、宽度 768 的 ViT。设 $B$ 为图像数，$D=768$ 为每个 token 的特征数，$H=12$ 为头数，每个头分到 $d_h=D/H=64$ 维。$224\times224$ 的图像按 $32\times32$ 切成 $7\times7=49$ 块，每块展开成 $3\times32\times32=3072$ 个数，加上 1 个 CLS token 共 50 个 token，MLP 中间层宽 3072。图~\ref{fig:vit-arch} 是前向流程，蓝色为课程提供的计算，橙色是这次补的部分。
+模型 12 层、宽 768、12 头各 64 维；$224\times224$ 按 $32\times32$ 切成 49 块，每块 3072 个数，加 CLS 共 50 个 token，MLP 中间层 3072 维。图~\ref{fig:vit-arch} 是前向流程，橙色为本次实现。
 
 \begin{figure}[htbp]
     \centering
@@ -203,107 +199,60 @@
     \label{fig:vit-arch}
 \end{figure}
 
-\section{实现}
-
-六个 TODO 分在三个类里：切块、嵌入和输出头在 \texttt{ImageEncoder}，拆头与注意力在 \texttt{MultiHeadAttention}，残差和 MLP 在 \texttt{TransformerBlock}。下面按执行顺序说明，代码取自文件中的实际实现，淡黄底色标出的是容易写错的关键行。
-
-\subsection{图块切分与嵌入}
-
-\texttt{reshape} 把图像拆成 batch、通道、$7\times7$ 网格和 $32\times32$ 块内像素六个轴，\texttt{transpose} 把两个网格轴移到通道轴前面，最后一次 \texttt{reshape} 完成展平。图块的先后顺序完全由轴序决定，行列写反不会报错，但 patch 顺序和参考对不上，\texttt{patches} 阶段就会失败。嵌入用共享的投影矩阵把每个图块从 3072 维映射到 768 维，没有偏置；CLS 复制 $B$ 份后拼在 token 轴最前面，再加形状为 $[50,768]$ 的位置编码，位置编码没有 batch 轴，加法靠广播完成。
+\noindent\textbf{切块与嵌入。}六轴 \texttt{reshape} 把图像拆成 batch、通道、$7\times7$ 网格和块内像素，\texttt{transpose} 把网格轴提到通道轴前，最后一次 \texttt{reshape} 展平。patch 顺序完全由轴序决定，写反不报错，只会在 \texttt{patches} 阶段对不上。嵌入把每块投到 768 维（无偏置），拼上 CLS，再加位置编码，位置编码没有 batch 轴，靠广播相加。
 
 \needspace{8\baselineskip}
-\begin{lstlisting}[linebackgroundcolor={\hl{3}}]
-# patchify
+\begin{lstlisting}[linebackgroundcolor={\hl{2}}]
 x = images.reshape(B, 3, 7, 32, 7, 32)
-x = x.transpose(0, 2, 4, 1, 3, 5)      # 网格轴提到通道轴前，决定 patch 顺序
+x = x.transpose(0, 2, 4, 1, 3, 5)          # 轴序决定 patch 排列
 return x.reshape(B, 49, 3072)
 
-# embed
 tokens = patches @ self.patch_weight.T
 cls = np.repeat(self.cls, images.shape[0], axis=0)
 tokens = np.concatenate((cls, tokens), axis=1)
 tokens += self.position
 \end{lstlisting}
 
-\subsection{多头自注意力}
+\noindent\textbf{多头注意力。}拆头把 768 维分成 12 组、每组 64 维，再把 head 轴移到 token 轴前：每个 head 看到全部 50 个 token，但只处理自己那 64 维。分数按 $\mathrm{scores}=qk^{\mathsf{T}}/\sqrt{d_h}$ 算，除 $\sqrt{64}=8$ 是为了点积不随维度变大而让 softmax 饱和；系数由课程提供的 \texttt{attention\_weights} 归一化得到，乘 $v$ 后合头、投影。
 
-拆头把每个 token 的 768 维分成 12 组、每组 64 维，再把 head 轴挪到 token 轴前面。每个 head 因此都能看到全部 50 个 token，但只处理属于自己的 64 维，这一步只改数据布局。分数用缩放点积算，$q$ 和 $k$ 都是四维，要把 $k$ 的最后两轴交换才能对齐特征维：
-\begin{equation}
-\mathrm{scores}=\frac{q\,k^{\mathsf{T}}}{\sqrt{d_h}},\qquad
-\mathrm{scores}\in\mathbb{R}^{B\times H\times N\times N}.
-\end{equation}
-除以 $\sqrt{64}=8$ 是因为点积随维度增大会变大，softmax 容易饱和。系数由课程提供的 \texttt{attention\_weights} 按最后一轴归一化得到，再乘 $v$；合并时把 head 轴移回 token 轴后面，最后过输出投影。
-
-\needspace{4\baselineskip}
+\needspace{8\baselineskip}
 \begin{lstlisting}[linebackgroundcolor={\hl{1}\hl{3}}]
-k_t = k.transpose(0, 1, 3, 2)          # 只换最后两轴，保留 batch 和 head
+k_t = k.transpose(0, 1, 3, 2)              # 只换最后两轴
 scores = q @ k_t
 scores = scores / np.sqrt(np.float32(self.head_dim))   # 用 float32 开方
-\end{lstlisting}
 
-\needspace{5\baselineskip}
-\begin{lstlisting}
+coefficients = attention_weights(scores)
 context = coefficients @ v
 context = context.transpose(0, 2, 1, 3)
 merged = context.reshape(B, N, D)
 output = merged @ self.out_weight.T + self.out_bias
 \end{lstlisting}
 
-\subsection{Transformer block 与输出头}
+\noindent\textbf{block 与输出头。}预归一化结构，先归一化再算，结果加回输入，两条残差都保持 $[B,50,768]$；MLP 先扩到 3072 维，过 GELU 再缩回。输出头只取第 0 行 CLS，过 \texttt{post\_norm} 和 $[768,512]$ 投影，最后单位化。
 
-block 是预归一化结构，先归一化再算，结果加回输入，两条残差都保持 $[B,50,768]$；MLP 把 768 维扩到 3072 维，过 GELU 再缩回 768 维。
-\begin{equation}
-\begin{aligned}
-\mathrm{residual} &= x + \mathrm{Attn}(\mathrm{LN}_1(x)),\\
-y &= \mathrm{residual} + W_2\,\mathrm{GELU}\!\left(W_1\,\mathrm{LN}_2(\mathrm{residual})+b_1\right)+b_2 .
-\end{aligned}
-\end{equation}
-
-\needspace{7\baselineskip}
-\begin{lstlisting}[linebackgroundcolor={\hl{5}\hl{8}}]
+\needspace{8\baselineskip}
+\begin{lstlisting}[linebackgroundcolor={\hl{6}\hl{9}}]
 residual = x + update
 u = self.norm2(residual)
 hidden = u @ self.fc1_weight.T + self.fc1_bias
 hidden = self.gelu(hidden)
 mlp_update = hidden @ self.fc2_weight.T + self.fc2_bias   # 3072 -> 768
+return residual + mlp_update
 
-# 输出头
-cls = self.post_norm(y[:, 0, :])
-return unit_vector(cls @ self.projection)   # 权重已是 [in, out]，不再转置
+cls = tokens[:, 0, :]
+cls = self.post_norm(cls)
+return unit_vector(cls @ self.projection)   # 权重已是 [in, out]
 \end{lstlisting}
 
-\subsection{权重方向}
-
-线性层参数按 PyTorch 的 $[\text{out},\text{in}]$ 存放，乘法前要转置，只有输出投影是例外（表~\ref{tab:weight}）。这一点直接决定代码报错还是结果正确，所以单独列出。
-
-\begin{table}[htbp]
-    \centering
-    \caption{权重张量的存储方向}
-    \label{tab:weight}
-    \small
-    \begin{tabular}{llll}
-        \toprule
-        参数 & 存储形状 & 乘法写法 & 说明 \\
-        \midrule
-        \texttt{in\_proj\_weight} & $[2304,768]$ & \texttt{x @ W.T} & 一次算出 Q、K、V \\
-        \texttt{out\_proj.weight} & $[768,768]$ & \texttt{merged @ W.T} & 注意力输出投影 \\
-        \texttt{mlp.c\_fc.weight} & $[3072,768]$ & \texttt{u @ W.T} & 扩到 3072 维 \\
-        \texttt{mlp.c\_proj.weight} & $[768,3072]$ & \texttt{hidden @ W.T} & 缩回 768 维 \\
-        \texttt{conv1.weight} & $[768,3,32,32]$ & \texttt{patches @ W.T} & 重排成 $[768,3072]$，无偏置 \\
-        \texttt{visual.proj} & $[768,512]$ & \texttt{cls @ W} & 已是 $[\text{in},\text{out}]$，不转置 \\
-        \bottomrule
-    \end{tabular}
-\end{table}
+权重按 PyTorch 的 $[\text{out},\text{in}]$ 存放，乘法前要转置；只有 \texttt{visual.proj} 已是 $[768,512]$，不能再转。
 
 \section{结果}
 
-\texttt{check.py} 把前向拆成 7 个数值阶段，外加 1 个文件完整性阶段，每个阶段都拿课程提供的独立 FP32 参考数组对照形状、类型、有限性和逐元素误差。这样安排是为了定位：前一阶段通过、后一阶段失败，问题就在两者之间；\texttt{block0} 把 12 层的问题压到一层里查；最后的 \texttt{batch} 把输入顺序改成 $[1,0,1]$ 再逐行对照，用来排除缓存参考结果、样本间共享状态这两种可能。
-
-实验环境为 Python 3.13.7、NumPy 2.5.5、Pillow 12.3.0，在 CPU 上运行。项目目录下执行 \verb|python check.py --stage all|，8 个阶段全部通过，输出见图~\ref{fig:check}。
+项目目录下执行 \verb|python check.py --stage all|，8 个阶段全部通过，输出见图~\ref{fig:check}，各阶段误差见表~\ref{tab:errors}。环境为 Python 3.13.7、NumPy 2.5.5、Pillow 12.3.0。
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.9\linewidth]{check_output.png}
+    \includegraphics[width=0.88\linewidth]{check_output.png}
     \caption{8 个阶段全部 PASS；终端右侧被截断的容差列见表~\ref{tab:errors}。}
     \label{fig:check}
 \end{figure}
@@ -328,57 +277,21 @@ return unit_vector(cls @ self.projection)   # 权重已是 [in, out]，不再转
     \end{tabular}
 \end{table}
 
-前两个阶段的误差是 0。预处理和 \texttt{patchify} 只做缩放、切片和重排，没有浮点累加，结果应当逐位相同，也给后面的排查提供了基线。
-
-进入矩阵乘法后，误差落在 $10^{-6}$ 到 $10^{-5}$ 之间。\texttt{tokens} 的最大误差 $4.578\times10^{-5}$ 来自 $3072\times768$ 的投影：NumPy 的 BLAS 和参考实现的分块顺序不同，累加顺序跟着不同，单次乘加约 $10^{-7}$ 的舍入经上千项累加后放大到这个量级。\texttt{last\_tokens} 的 $4.101\times10^{-5}$ 与它相当，没有随 12 层深度明显累积，原因是每个 block 里的 LayerNorm 会把特征重新拉回固定尺度，残差又让主分量直接透传，两者一起压住了误差传播，各阶段的相对 L2 误差也都在 $5\times10^{-6}$ 以内且不随深度单调增长。
-
-\texttt{output} 的误差反而最小，$5.960\times10^{-7}$，比中间 token 低两个数量级。这不是算得更准，而是 L2 归一化把每行缩到长度 1 后，元素幅值只有 $1/\sqrt{512}\approx0.044$，绝对误差随尺度一起变小。实测每行长度在 $0.99999994$ 到 $1.0$ 之间，与参考向量的余弦相似度不低于 $0.99999994$。\texttt{batch} 的误差和 \texttt{output} 同量级，说明换了顺序、重复了图像之后，输出仍然逐行对上输入的排列。
-
-这些差异都来自浮点累加顺序，不是算法不同：参考实现是 Torch 的 FP32 前向，矩阵乘法的分块与归约顺序和 NumPy 的 BLAS 不一样；GELU 用 \texttt{math.erf} 逐元素计算，末位差异也会进来，幅度远小于容差；LayerNorm 的 $\epsilon=10^{-5}$ 和零长度保护由课程固定，直接调用就不会引入偏差。
+\texttt{preprocess} 和 \texttt{patches} 只做缩放、切片、重排，没有浮点累加，误差为 0。进入矩阵乘法后误差在 $10^{-6}$ 到 $10^{-5}$，来自 BLAS 与参考实现的分块累加顺序不同；\texttt{last\_tokens} 没有随 12 层放大，因为 LayerNorm 把特征拉回固定尺度，残差又让主分量直接透传。\texttt{output} 反而最小，是 L2 归一化把每行缩到长度 1、幅值只有 $0.044$，绝对误差跟着变小，实测每行长度 $0.99999994$ 到 $1.0$，与参考的余弦相似度不低于 $0.99999994$。\texttt{batch} 把顺序改成 $[1,0,1]$ 后仍逐行对齐，说明没有缓存参考结果，样本之间也不互相影响。
 
 \section{讨论}
 
-\subsection{一个不影响数值的类型错误}
+注意力分数最初写成 \verb|scores / np.sqrt(self.head_dim)|：\texttt{head\_dim} 是 Python 整数，\verb|np.sqrt| 返回 \texttt{float64}，\texttt{float32} 数组相除会被提升，最终输出不再是 \texttt{float32}。除数先转 \texttt{float32} 再开方，因子仍是 $8$，类型保持。按 \texttt{float64} 重算整条前向，数值差只有 $1.32\times10^{-7}$，能过数值容差，但类型不符照样判失败——验收查的是接口契约。
 
-注意力分数最初写成 \verb|scores / np.sqrt(self.head_dim)|。\texttt{head\_dim} 是 Python 整数 64，\verb|np.sqrt(64)| 返回 \texttt{float64} 标量，\texttt{float32} 数组除以它会被提升成 \texttt{float64}，这个类型顺着 softmax、加权求和和投影一路传下去，最终输出就不再是 \texttt{float32}。把除数先转成 \texttt{float32} 再开方，缩放因子还是 $8$，结果保持 \texttt{float32}。
+$k$ 是四维数组，\texttt{k.T} 会把四个轴全颠倒，\texttt{q @ k.T} 直接抛 \texttt{ValueError}，只能交换最后两轴；\texttt{mlp.c\_proj.weight} 存成 $[768,3072]$，漏写 \texttt{.T} 同样报错；\texttt{visual.proj} 已是 $[768,512]$，不能再转。三处都是方向问题，只有一处不转。
 
-为了弄清这个错误的性质，我按 \texttt{float64} 缩放把整条前向重算了一遍：输出和正确实现的最大差异只有 $1.32\times10^{-7}$，数值上完全能过 $\mathrm{atol}=2\times10^{-5}$，但类型不符仍会被判失败。也就是说，这次验收查的是接口契约，不只是数值接近。光看误差表发现不了这个 bug，只有类型被单独约束时才暴露；后面接进完整项目时，类型不一致还会在拼接和存储时引起隐式转换。
-
-\subsection{轴序与权重方向}
-
-$k$ 是四维数组，直接写 \texttt{k.T} 会把四个轴全颠倒，矩阵乘法因为核心维度对不上抛 \texttt{ValueError}，正确做法只交换最后两轴，保留 batch 和 head 分组。\texttt{mlp.c\_proj.weight} 存成 $[768,3072]$，输入是 $[B,N,3072]$，漏写 \texttt{.T} 同样是 \texttt{ValueError}，补上后得到 $[B,N,768]$ 才能和残差相加。\texttt{visual.proj} 反过来，它已经是 $[768,512]$，再转置一次变成 $[512,768]$，乘法直接做不了。三处都是方向问题，只有一处不需要转置，所以我是逐个核对权重形状，而不是套同一个写法。
-
-\subsection{局限与结论}
-
-验证只覆盖课程给的 10 张图像和 3 种 batch 组合，没有试全黑图、非正方形原图这类边界输入，预处理由课程提供，其边界行为没有单独检查；实现以正确为先，GELU 的逐元素循环在 $B=10$ 时可以接受，但不是最快的写法。
-
-六项 TODO 完成后，编码器在 8 个阶段全部通过，最终输出与独立 FP32 参考的最大绝对误差为 $5.960\times10^{-7}$，相对 L2 误差 $2.48\times10^{-6}$，每行长度为 1。这次实验里，分阶段对照是最有效的排错手段，形状和权重方向是最容易出错的地方，数据类型虽然不影响数值，却属于必须满足的约定。
+验证只覆盖课程给的 10 张图和 3 种 batch 组合，没试边界输入；GELU 用逐元素循环，$B=10$ 时可以接受，但不是最快的写法。
 
 \section{个人贡献与协助}
 
-我逐项推导了六个 TODO 的输入输出形状并完成实现，用分阶段检查定位问题。注意力缩放的类型问题是我在核对输出类型时发现并改掉的，MLP 第二层漏掉的 \texttt{.T} 是对照权重形状后补上的。外部协助用于理解多头注意力与 MLP 的组织方式、核对形状推导，以及检查 NumPy 写法是否符合项目风格；报告的排版和流程图整理也有 AI 参与。权重、预处理、数值辅助函数、检查脚本和参考数组都由课程提供，没有改动。
+六个 TODO 的输入输出形状是我逐个推的，实现和调试也是我做的；注意力缩放的类型问题是核对输出类型时发现并改的，MLP 第二层漏掉的 \texttt{.T} 是对照权重形状补上的。外部协助用于理解多头注意力和 MLP 的组织方式、核对 NumPy 写法，报告的排版与流程图有 AI 参与。权重、预处理、辅助函数、检查脚本和参考数组由课程提供，未改动。
 
-\begin{table}[htbp]
-    \centering
-    \caption{六项 TODO 的具体工作}
-    \label{tab:contrib}
-    \footnotesize
-    \renewcommand{\arraystretch}{1.02}
-    \begin{tabular}{p{1.7cm}p{6.8cm}p{5.8cm}}
-        \toprule
-        任务 & 我做的事 & 依据 \\
-        \midrule
-        TODO-01 & 六轴 \texttt{reshape} 与轴序，确定 patch 排列 & $224/32=7$，按 $C,H,W$ 展开 \\
-        TODO-02 & 拆分特征维，交换 token 轴与 head 轴 & $[B,N,D]\to[B,H,N,d_h]$ \\
-        TODO-03 & 分数、缩放、加权、合头与输出投影 & 取 $\sqrt{d_h}$，核对权重方向 \\
-        TODO-04 & 两条残差与 MLP 前向 & 对照 \texttt{transformer\_steps.py} \\
-        TODO-05 & 图块投影、CLS 拼接、位置编码广播 & $[B,49,768]$ 与 $[50,768]$ 的广播 \\
-        TODO-06 & 取 CLS、后置归一化、投影、单位化 & 由输出 $[B,512]$ 反推 \\
-        \bottomrule
-    \end{tabular}
-\end{table}
-
-提交内容为 \texttt{image\_encoder.py}、说明运行方式的 README 和本报告。复现只需三步：装依赖 \texttt{pip install -r requirements.txt}，跑 \texttt{python check.py --stage all} 验收，再跑 \texttt{python run.py --output output\_tokens.npz} 生成结果，输出按输入顺序保存 10 张图的 ID 与特征。代码仓库：\url{https://github.com/ach3rry/project1-vit-numpy}。
+提交 \texttt{image\_encoder.py}、README 和本报告。生成结果用 \texttt{python run.py}，参数 \texttt{--output output\_tokens.npz}，按输入顺序导出 10 张图的 ID 与特征。代码仓库：\url{https://github.com/ach3rry/project1-vit-numpy}。
 
 \newpage
 
