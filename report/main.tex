@@ -15,15 +15,10 @@
     {\setCJKmainfont{Noto Serif CJK SC}}
     {\setCJKmainfont[AutoFakeBold=2]{SimSun}}
 
-\IfFontExistsTF{Noto Serif CJK SC}
-    {\setCJKmonofont{Noto Serif CJK SC}}
-    {\setCJKmonofont[AutoFakeBold=2]{SimSun}}
-
 % ----------------------------
 % 页面设置与常用宏包
 % ----------------------------
 \usepackage{geometry}    % 页面边距控制
-\usepackage{indentfirst} % 每节首段也缩进
 \geometry{left=1in, right=1in, top=1in, bottom=1in}
 \setlength{\parindent}{2em}
 \setlength{\parskip}{0pt}
@@ -32,64 +27,20 @@
 \usepackage{graphicx}    % 插入图片
 \usepackage{fancyhdr}    % 页眉页脚控制
 \usepackage{tikz}        % 绘制框线等图形
-\usetikzlibrary{calc, positioning, arrows.meta, backgrounds, fit}
+\usetikzlibrary{calc}    % 坐标计算
 \usepackage{verbatim}    % 显示代码块
 \usepackage{float}       % 控制图片浮动位置（[H]参数）
 \usepackage{amsmath}     % 公式
-\usepackage{amssymb}     % \mathbb 等符号
-\usepackage{booktabs}    % 三线表
-\usepackage{xcolor}      % 颜色
-\usepackage{listings}    % 代码高亮
-\usepackage{lstlinebgrd} % 按行加底色，用于标出关键代码
-\usepackage{caption}     % 图表标题格式
-\usepackage{needspace}   % 避免代码块被拆到两页
-\usepackage{xurl}        % 允许网址在任意位置断行
-
-% 图中使用的两个标注命令
-\newcommand{\shp}[1]{{\footnotesize\ttfamily\color{black!55}#1}}
-\newcommand{\todotag}[1]{{\scriptsize\bfseries\color{red!70!black}#1}}
 
 \renewcommand{\figurename}{图}
 \renewcommand{\tablename}{表}
-\captionsetup{font=small, labelsep=quad}
-\renewcommand{\arraystretch}{1.12}
-\setlength{\emergencystretch}{2em}
-
-% ----------------------------
-% 代码块样式
-% ----------------------------
-\definecolor{codebg}{RGB}{248,248,250}
-\definecolor{markbg}{RGB}{255,244,214}
-
-% 给指定行加底色：\hl{行号}
-\newcommand{\hl}[1]{\ifnum\value{lstnumber}=#1 \color{markbg}\fi}
-
-\lstdefinestyle{numpy}{
-    language=Python,
-    basicstyle=\ttfamily\footnotesize,
-    keywordstyle=\color[RGB]{30,80,160}\bfseries,
-    commentstyle=\color[RGB]{30,120,70}\itshape,
-    backgroundcolor=\color{codebg},
-    frame=single,
-    rulecolor=\color{black!20},
-    framerule=0.4pt,
-    framesep=4pt,
-    xleftmargin=10pt,
-    xrightmargin=6pt,
-    showstringspaces=false,
-    columns=fullflexible,
-    keepspaces=true,
-    breaklines=true,
-    aboveskip=5pt,
-    belowskip=5pt,
-}
-\lstset{style=numpy}
 
 % ----------------------------
 % 页眉页脚设置
 % ----------------------------
 % \pagestyle{fancy}
 \fancyhf{} % 清空默认页眉页脚
+% \fancyhead[L]{深圳大学实验报告} % 左侧页眉文字
 \fancyhead[C]{} % 中间空
 \fancyhead[R]{} % 右侧空
 
@@ -105,7 +56,7 @@
 \begin{titlepage}
     \centering
     \vspace*{2cm}
-    \Huge{\textbf{深 \ 圳 \ 大 \ 学 \ 实 \ 验  \ 报 \ 告}}\\[1.5cm]
+    \Huge{\textbf{深 \ 圳 \ 大 \ 学 \ 实 \ 验  \ 报 告}}\\[1.5cm]
     
     {\Large\textbf{课程名称}\quad\underline{\makebox[8cm][c]{Python程序设计}}}\\[0.5cm]
 {\Large
@@ -145,69 +96,26 @@
 
 \section{实验目的}
 
-本实验要求在不使用 PyTorch 的条件下，用 NumPy 复现 OpenCLIP ViT-B/32 图像编码器的前向计算。具体任务有三项：补全 \texttt{image\_encoder.py} 中的 TODO-01 至 TODO-06，覆盖图块切分、多头注意力、Transformer block、图像嵌入和输出头；使编码器把一批形状为 $[B,3,224,224]$ 的预处理图像映射成 $[B,512]$ 的单位向量；通过课程提供的 \texttt{check.py} 逐阶段验收，内部 token 与最终输出的误差都要落在给定容差内。
+本实验要在不使用 PyTorch 的条件下，用 NumPy 实现 OpenCLIP ViT-B/32 图像编码器的前向计算。给定课程提供的权重和预处理好的图像，编码器需要为每张图输出一个长度为 1 的 512 维 \texttt{float32} 特征向量。具体任务分三部分：补全 \texttt{image\_encoder.py} 中的六处 TODO，覆盖图块切分、注意力、Transformer block 和输出头；把一批 $[B,3,224,224]$ 的图像编码成 $[B,512]$；用项目自带的 \texttt{check.py} 逐阶段核对数值、形状和数据类型。
 
-实验在 Python 3.13.7、NumPy 2.5.5、Pillow 12.3.0 下完成，用项目自带的虚拟环境，纯 CPU 就能跑。权重、图像预处理、LayerNorm 和 GELU 这些函数、参考数组都由课程给出，没有改动。整个过程不涉及训练，不需要 GPU 和 PyTorch。
+实验环境为 Python 3.13.7、NumPy 2.5.5 和 Pillow 12.3.0，纯 CPU 运行。模型权重、图像预处理、LayerNorm、GELU、注意力归一化和参考输出都由课程提供，这几部分没有改动。整个过程不做训练，也不涉及 GPU。
 
 \section{实验原理}
 
 \subsection{模型结构}
 
-ViT-B/32 把图像当作一个 token 序列处理。$224\times224$ 的图像按 $32\times32$ 切成 $7\times7=49$ 个图块，每块展平成 $3\times32\times32=3072$ 维向量，经一次线性投影得到 768 维 token。序列前面再拼一个可学习的 CLS token，并加上同维度的位置编码，最终长度为 50。之后是 12 个宽度 768、含 12 个注意力头的 Transformer block。编码器只取 CLS 位置的输出，经 LayerNorm 和线性投影降到 512 维，再做 L2 归一化，得到与文本编码器同一空间的图像特征。
+ViT-B/32 把图像当作 token 序列处理。$224\times 224$ 的图像按 $32\times 32$ 切成 $7\times 7=49$ 个图块，每块展平成 $3\times32\times32=3072$ 维，经一次线性投影得到 768 维的 token。序列最前面拼一个可学习的 CLS token，再加上同维度的位置编码，长度变成 50。之后是 12 个宽度 768、含 12 个注意力头的 Transformer block。编码器只取 CLS 位置的输出，经过 LayerNorm 和线性投影降到 512 维，最后做 L2 归一化。
 
-图~\ref{fig:vit-arch} 是完整的前向流程，每个框内标注了该步的张量形状，橙色是这次补的部分。
-
-\begin{figure}[htbp]
+\begin{figure}[H]
     \centering
-    \begin{tikzpicture}[
-        node distance=3.0mm,
-        box/.style={draw, rounded corners=2pt, minimum height=8mm,
-                    text width=7.8cm, align=center, font=\footnotesize,
-                    inner sep=3pt},
-        mine/.style={box, fill=orange!10, draw=red!65!black, line width=0.8pt},
-        given/.style={box, fill=blue!6, draw=blue!45!black, line width=0.5pt},
-        ar/.style={-{Latex[length=2mm,width=1.6mm]}, line width=0.7pt, draw=black!55},
-      ]
-      \node[given] (n1) {预处理后的 RGB 图像\\[1pt]\shp{[B, 3, 224, 224]}};
-      \node[mine, below=of n1] (n2) {切分并展平图块\quad\todotag{TODO-01}\\[1pt]\shp{[B, 49, 3072]}};
-      \node[mine, below=of n2] (n3) {图块投影、拼接 CLS、加位置编码\quad\todotag{TODO-05}\\[1pt]\shp{[B, 50, 768]}};
-      \node[given, below=of n3] (n4) {输入 LayerNorm\\[1pt]\shp{[B, 50, 768]}};
-      \node[mine, below=of n4, text width=8.7cm] (n5)
-        {\textbf{Transformer block $\times$ 12}\quad\todotag{TODO-02 / 03 / 04}\\[1pt]
-         拆头 $\to$ 注意力 $\to$ 合头 $\to$ 残差 $\to$ MLP $\to$ 残差\\[1pt]
-         \shp{[B, 50, 768] 保持不变}};
-      \node[mine, below=of n5] (n6) {取 CLS、后置 LayerNorm、线性投影\quad\todotag{TODO-06}\\[1pt]
-         \shp{[B, 768] $\to$ [B, 512]}};
-      \node[given, below=of n6] (n7) {L2 归一化（课程提供）\\[1pt]\shp{float32 [B, 512]}};
-
-      \foreach \a/\b in {n1/n2, n2/n3, n3/n4, n4/n5, n5/n6, n6/n7}
-        \draw[ar] (\a) -- (\b);
-
-      \begin{scope}[on background layer]
-        \node[draw=red!65!black, dashed, line width=0.5pt, rounded corners=3pt,
-              inner sep=3pt, fit=(n2)(n3)] (g1) {};
-        \node[draw=red!65!black, dashed, line width=0.5pt, rounded corners=3pt,
-              inner sep=3pt, fit=(n5)(n6)] (g2) {};
-      \end{scope}
-      \node[font=\scriptsize\bfseries, text=red!70!black, anchor=west]
-            at ($(g1.east)+(3pt,0)$) {本次实现};
-      \node[font=\scriptsize\bfseries, text=red!70!black, anchor=west]
-            at ($(g2.east)+(3pt,0)$) {本次实现};
-
-      \node[given, minimum height=4.5mm, text width=1.9cm, font=\scriptsize,
-            anchor=north west] at ($(n7.south west)+(-0.1,-0.40)$) {课程提供};
-      \node[mine, minimum height=4.5mm, text width=1.9cm, font=\scriptsize,
-            anchor=north west] at ($(n7.south west)+(2.2,-0.40)$) {本次实现};
-      \node[font=\scriptsize, text=black!60, anchor=north west]
-            at ($(n7.south west)+(4.5,-0.15)$) {括号内为张量形状，$B$ 为图像数};
-    \end{tikzpicture}
-    \caption{图像编码器的前向流程。蓝色为课程提供的计算，橙色为本次补全的步骤。}
-    \label{fig:vit-arch}
+    \includegraphics[width=0.95\linewidth]{project1_forward.png}
+    \caption{图像编码器的前向流程，每步标注了张量形状，$B$ 为图像数}
+    \label{fig:forward}
 \end{figure}
 
 \subsection{多头注意力}
 
-每个 token 先由一个 $[2304,768]$ 的矩阵同时算出 Q、K、V 三组表示，再按头拆成 12 组，每组 64 维。单个头的输出为
+每个 token 先由一个 $[2304,768]$ 的权重矩阵同时算出 Q、K、V，再按头拆成 12 组，每组 64 维。单个头的输出为
 
 \begin{equation}
 \mathrm{head}_i=\mathrm{softmax}\!\left(\frac{Q_iK_i^{\mathsf T}}{\sqrt{d_h}}\right)V_i,
@@ -215,11 +123,11 @@ ViT-B/32 把图像当作一个 token 序列处理。$224\times224$ 的图像按 
 \label{eq:attn}
 \end{equation}
 
-除以 $\sqrt{d_h}$ 是为了让点积的方差与维度无关。若不缩放，$d_h$ 越大点积的绝对值越大，softmax 会退化成近似 one-hot，梯度几乎为零。12 个头的结果沿特征维拼接后，再经一个 $[768,768]$ 的输出投影回到原宽度。
+除以 $\sqrt{d_h}$ 是为了让点积的方差与维度无关。若不缩放，$d_h$ 越大点积的绝对值越大，softmax 的输出会接近 one-hot，梯度也随之消失。12 个头的结果沿特征维拼回 768 维，再经过一次输出投影。
 
 \subsection{预归一化 block}
 
-每个 Transformer block 采用 pre-norm 结构，归一化放在子层之前，残差直接透传主干：
+每个 block 采用 pre-norm 结构，归一化放在子层之前，残差直接透传：
 
 \begin{equation}
 x' = x + \mathrm{MHA}\big(\mathrm{LN}_1(x)\big),
@@ -228,144 +136,121 @@ y = x' + \mathrm{MLP}\big(\mathrm{LN}_2(x')\big).
 \label{eq:block}
 \end{equation}
 
-MLP 由两层线性变换组成，中间维度 3072，激活函数用精确 GELU。整个 block 的输入输出都是 $[B,50,768]$，因此 12 层可以首尾直接相接。
+MLP 由两层线性变换组成，中间维度 3072，激活函数用精确 GELU。block 的输入输出都是 $[B,50,768]$，因此 12 层可以首尾直接相连。
 
-\section{实现过程}
+\section{实验步骤}
 
-实现集中在 \texttt{image\_encoder.py} 的三个类中：\texttt{ImageEncoder} 负责切块、嵌入和输出头，\texttt{MultiHeadAttention} 负责拆头与注意力，\texttt{TransformerBlock} 负责残差与 MLP。下面按前向顺序说，代码都是文件里的实际实现，淡黄底色标出容易出错的行。
+实现集中在 \texttt{image\_encoder.py} 的三个类里：\texttt{ImageEncoder} 负责切块、嵌入和输出头，\texttt{MultiHeadAttention} 负责拆头和注意力，\texttt{TransformerBlock} 负责残差与 MLP。下面按前向顺序说明。
 
 \subsection{图块切分与嵌入}
 
-图像以 $[B,3,224,224]$ 进入编码器。每个图块边长 32，每条边正好分成 7 段，因此用一次 \texttt{reshape} 就能把高、宽两个轴同时拆成“网格位置”和“块内偏移”，形状变为 $[B,3,7,32,7,32]$。此时轴序是通道、网格行、块内行、网格列、块内列，而 patch 要求按行优先排列、块内按通道、高、宽的顺序展开，所以下一步用 \texttt{transpose} 把两个网格轴提到通道轴之前，再 \texttt{reshape} 成 $[B,49,3072]$。
+图像以 $[B,3,224,224]$ 进入编码器，每条边正好分成 7 段。先 \texttt{reshape} 成 $[B,3,7,32,7,32]$，把高、宽两个轴各自拆成“网格位置”和“块内偏移”；再用 \texttt{transpose} 把两个网格轴提到通道轴之前，得到 $[B,7,7,3,32,32]$，这样按行优先展开就是 patch 的顺序。最后 \texttt{reshape} 成 $[B,49,3072]$。这一步没有算术，只是重排维度，轴序写错也不会报错，只会在与参考数组对比时对不上。
 
-这一步没有算术，只是重新排列维度。轴序写错不会报错，只会在 \texttt{patches} 阶段与参考数组对不上。
-
-\needspace{8\baselineskip}
-\begin{lstlisting}[linebackgroundcolor={\hl{2}}]
+\begin{verbatim}
 x = images.reshape(B, 3, 7, 32, 7, 32)
-x = x.transpose(0, 2, 4, 1, 3, 5)          # 网格轴提到通道轴之前
+x = x.transpose(0, 2, 4, 1, 3, 5)
 return x.reshape(B, 49, 3072)
+\end{verbatim}
 
-tokens = patches @ self.patch_weight.T
-cls = np.repeat(self.cls, images.shape[0], axis=0)
-tokens = np.concatenate((cls, tokens), axis=1)
-tokens += self.position
-\end{lstlisting}
-
-嵌入是一层无偏置的线性投影，把每个 3072 维图块映射到 768 维。CLS 只有一行，用 \texttt{np.repeat} 复制到 batch 大小，再沿 token 轴拼在图块前面。位置编码的形状是 $[50,768]$，没有 batch 轴，与 $[B,50,768]$ 相加时由 NumPy 广播成每张图共用同一套位置参数。
+嵌入是一层无偏置的线性投影，把每个图块从 3072 维映射到 768 维。CLS 只有一行，用 \texttt{np.repeat} 复制到 batch 大小，再沿 token 轴拼在图块前面。位置编码形状是 $[50,768]$，没有 batch 轴，与 $[B,50,768]$ 相加时由 NumPy 广播，每张图共用同一套位置参数。
 
 \subsection{多头注意力}
 
-输入 $x$ 是 $[B,50,768]$。先用合并的 $[2304,768]$ 矩阵与 $[2304]$ 偏置一次算出 Q、K、V，再沿最后一维切成三段，各自拆头。拆头的做法是把 768 分成 $12\times64$，然后把 head 轴移到 token 轴之前，得到 $[B,12,50,64]$：每个头都保留完整的 50 个 token，只处理自己那 64 维特征。
+输入 $x$ 是 $[B,50,768]$。用合并的 $[2304,768]$ 权重和 $[2304]$ 偏置一次算出 Q、K、V，再沿最后一维切成三段。拆头时把 768 分成 $12\times64$，然后把 head 轴移到 token 轴之前，得到 $[B,12,50,64]$，每个头保留完整的 50 个 token，只处理自己那 64 维。
 
-分数由 $q$ 与转置后的 $k$ 相乘得到，形状为 $[B,12,50,50]$。$k$ 是四维数组，不能直接用 \texttt{k.T}——它会把四个轴全部颠倒，矩阵乘法将直接抛出 \texttt{ValueError}，必须只交换最后两个轴。除以 $\sqrt{64}=8$ 之后交给课程提供的 \texttt{attention\_weights} 做 softmax 归一化。系数与 $v$ 相乘得到每个头的上下文，把 head 轴移回 token 轴之后展平成 $[B,50,768]$，最后过 $[768,768]$ 的输出投影。
+分数由 $q$ 与转置后的 $k$ 相乘得到，形状为 $[B,12,50,50]$。$k$ 是四维数组，不能直接写 \texttt{k.T}，它会把四个轴全部颠倒，乘法会抛出 \texttt{ValueError}，必须只交换最后两个轴。除以 8 之后交给课程提供的 \texttt{attention\_weights} 做 softmax。系数与 $v$ 相乘得到每个头的上下文，把 head 轴移回 token 轴后展平成 $[B,50,768]$，最后过 $[768,768]$ 的输出投影。
 
-\needspace{8\baselineskip}
-\begin{lstlisting}[linebackgroundcolor={\hl{1}\hl{3}}]
-k_t = k.transpose(0, 1, 3, 2)              # 只交换最后两轴
-scores = q @ k_t
-scores = scores / np.sqrt(np.float32(self.head_dim))   # 先转 float32 再开方
-
+\begin{verbatim}
+k_t = k.transpose(0, 1, 3, 2)
+scores = q @ k_t / np.sqrt(np.float32(self.head_dim))
 coefficients = attention_weights(scores)
-context = coefficients @ v
-context = context.transpose(0, 2, 1, 3)
+context = (coefficients @ v).transpose(0, 2, 1, 3)
 merged = context.reshape(B, N, D)
 output = merged @ self.out_weight.T + self.out_bias
-\end{lstlisting}
+\end{verbatim}
 
-\subsection{Transformer block 与输出头}
+\subsection{Transformer block}
 
-block 按式~\eqref{eq:block} 的顺序计算：先对输入做第一次归一化再进注意力，结果加回原输入得到 \texttt{residual}；再对 \texttt{residual} 做第二次归一化，过 MLP 后加回 \texttt{residual}。两条残差都保持 $[B,50,768]$。MLP 的第一层把 768 维扩到 3072 维，GELU 之后第二层缩回 768 维，这一层的权重按 $[\text{out},\text{in}]$ 存放，相乘前要转置。
+block 按式~\eqref{eq:block} 的顺序算：先对输入做第一次归一化进入注意力，结果加回原输入得到 \texttt{residual}；再对 \texttt{residual} 做第二次归一化，过 MLP 后加回 \texttt{residual}。两条残差都保持 $[B,50,768]$。MLP 第一层把 768 维扩到 3072 维，GELU 之后第二层缩回 768 维，这一层的权重按 $[\text{out},\text{in}]$ 存放，相乘前要转置。
 
-12 层走完后只取第 0 个 token，也就是 CLS。它经过 \texttt{post\_norm} 和 $[768,512]$ 的投影完成降维，最后单位化。这里的投影权重已经是 $[\text{in},\text{out}]$ 布局，与 block 内的线性层相反，不能再转置。
-
-\needspace{8\baselineskip}
-\begin{lstlisting}[linebackgroundcolor={\hl{5}\hl{10}}]
+\begin{verbatim}
+update = self.attn(self.norm1(x))
 residual = x + update
 u = self.norm2(residual)
-hidden = u @ self.fc1_weight.T + self.fc1_bias
-hidden = self.gelu(hidden)
-mlp_update = hidden @ self.fc2_weight.T + self.fc2_bias   # 3072 -> 768
+hidden = self.gelu(u @ self.fc1_weight.T + self.fc1_bias)
+mlp_update = hidden @ self.fc2_weight.T + self.fc2_bias
 return residual + mlp_update
+\end{verbatim}
 
+\subsection{输出头}
+
+12 层走完后只取第 0 个 token，也就是 CLS，形状从 $[B,50,768]$ 变成 $[B,768]$。它经过 \texttt{post\_norm} 和 $[768,512]$ 的投影完成降维，最后单位化。这里的投影权重已经是 $[\text{in},\text{out}]$ 布局，与 block 内的线性层相反，不能再转置。
+
+\begin{verbatim}
 cls = tokens[:, 0, :]
 cls = self.post_norm(cls)
-return unit_vector(cls @ self.projection)   # 权重已是 [in, out]，不转置
-\end{lstlisting}
+return unit_vector(cls @ self.projection)
+\end{verbatim}
 
 \section{实验结果}
 
-\subsection{验收检查}
+在项目目录下执行 \verb|python check.py --stage all|，8 个阶段全部通过，输出见图~\ref{fig:check}，各阶段相对参考数组的偏差见表~\ref{tab:errors}。
 
-在项目目录下执行 \verb|python check.py --stage all|，8 个阶段全部通过，终端输出见图~\ref{fig:check}，各阶段的数值偏差见表~\ref{tab:errors}。
-
-检查按前向顺序分段，目的是便于定位：\texttt{preprocess} 只验预处理，\texttt{patches} 验切块顺序，\texttt{tokens} 验嵌入，\texttt{block0} 把 12 层压到一层单独查，\texttt{last\_tokens} 验整条主干，\texttt{output} 验最终向量，\texttt{batch} 把输入顺序改成 $[1,0,1]$ 再逐行对照。前一阶段通过、后一阶段失败，问题就落在两者之间。
-
-\begin{figure}[htbp]
+\begin{figure}[H]
     \centering
-    \includegraphics[width=0.88\linewidth]{check_output.png}
-    \caption{运行 \texttt{check.py --stage all} 的输出，8 个阶段均为 PASS。}
+    \includegraphics[width=\linewidth]{check_output.png}
+    \caption{运行 \texttt{check.py --stage all} 的终端输出}
     \label{fig:check}
 \end{figure}
 
-\begin{table}[htbp]
+\begin{table}[H]
     \centering
     \caption{各阶段输出相对参考数组的偏差}
     \label{tab:errors}
     \small
-    \begin{tabular}{lcrrr}
-        \toprule
-        阶段 & 输出形状 & 最大绝对误差 & 平均绝对误差 & 相对 L2 误差 \\
-        \midrule
-        \texttt{preprocess}   & $[10,3,224,224]$ & $0$ & $0$ & $0$ \\
-        \texttt{patches}      & $[2,49,3072]$    & $0$ & $0$ & $0$ \\
-        \texttt{tokens}       & $[2,50,768]$     & $4.578\times10^{-5}$ & $1.321\times10^{-6}$ & $1.18\times10^{-6}$ \\
-        \texttt{block0}       & $[2,50,768]$     & $6.109\times10^{-6}$ & $3.322\times10^{-7}$ & $2.22\times10^{-6}$ \\
-        \texttt{last\_tokens} & $[2,50,768]$     & $4.101\times10^{-5}$ & $2.748\times10^{-6}$ & $4.34\times10^{-6}$ \\
-        \texttt{output}       & $[10,512]$       & $5.960\times10^{-7}$ & $8.427\times10^{-8}$ & $2.48\times10^{-6}$ \\
-        \texttt{batch}        & $[3,512]$        & $4.657\times10^{-7}$ & $7.892\times10^{-8}$ & $2.34\times10^{-6}$ \\
-        \bottomrule
+    \renewcommand{\arraystretch}{1.18}
+    \begin{tabular}{@{}l@{\hspace{1.6em}}c@{\hspace{1.2em}}r@{\hspace{2.2em}}r@{}}
+        \hline
+        阶段 & 输出形状 & 最大绝对误差 & 平均绝对误差 \\
+        \hline
+        \texttt{preprocess}   & $[10,3,224,224]$ & $0$ & $0$ \\
+        \texttt{patches}      & $[2,49,3072]$    & $0$ & $0$ \\
+        \texttt{tokens}       & $[2,50,768]$     & $4.578\times10^{-5}$ & $1.321\times10^{-6}$ \\
+        \texttt{block0}       & $[2,50,768]$     & $6.109\times10^{-6}$ & $3.322\times10^{-7}$ \\
+        \texttt{last\_tokens} & $[2,50,768]$     & $4.101\times10^{-5}$ & $2.748\times10^{-6}$ \\
+        \texttt{output}       & $[10,512]$       & $5.960\times10^{-7}$ & $8.427\times10^{-8}$ \\
+        \texttt{batch}        & $[3,512]$        & $4.657\times10^{-7}$ & $7.892\times10^{-8}$ \\
+        \hline
     \end{tabular}
 \end{table}
 
-\subsection{误差分析}
+检查按前向顺序分段：\texttt{preprocess} 验预处理，\texttt{patches} 验切块顺序，\texttt{tokens} 验嵌入，\texttt{block0} 把 12 层压到一层单独查，\texttt{last\_tokens} 验整条主干，\texttt{output} 验最终向量，\texttt{batch} 把输入顺序改成 $[1,0,1]$ 再逐行对照。前一阶段通过、后一阶段失败，问题就落在两者之间。
 
-\texttt{preprocess} 和 \texttt{patches} 只做缩放、切片和重排，不涉及浮点累加，误差为 0。进入矩阵乘法后，误差升到 $10^{-6}$ 至 $10^{-5}$ 量级，主要来自累加顺序：参考实现是 PyTorch 的 FP32 前向，矩阵乘法的分块与归约顺序同 NumPy 调用的 BLAS 不同；课程提供的 GELU 用 \texttt{math.erf} 逐元素计算再转回 \texttt{float32}，末位差异也会叠加进来。这些偏差远小于容差，内部 token 的容差是 $\mathrm{atol}=2\times10^{-4}$。
+\texttt{preprocess} 和 \texttt{patches} 只做缩放、切片和重排，不涉及浮点累加，误差为 0。进入矩阵乘法后误差升到 $10^{-6}$ 至 $10^{-5}$ 量级，来源主要是累加顺序：参考实现是 PyTorch 的 FP32 前向，矩阵乘法的分块和归约顺序与 NumPy 调用的 BLAS 不同。这些偏差远小于容差，内部 token 的容差是 $\mathrm{atol}=2\times10^{-4}$。
 
-\texttt{last\_tokens} 经过 12 层后误差没有累积放大。每个 block 前都有 LayerNorm，把特征拉回固定尺度；残差又让主分量逐层直接透传，不经过子层的矩阵乘法，误差缺少放大的路径。
+\texttt{last\_tokens} 走完 12 层，误差没有累积放大。每个 block 前都有 LayerNorm 把特征拉回固定尺度，残差又让主分量逐层直接透传，不经过子层的矩阵乘法，误差缺少放大的路径。\texttt{output} 的绝对误差反而最小，只有 $5.960\times10^{-7}$，原因是 L2 归一化把每行缩到长度 1 以后，元素幅值只剩 $1/\sqrt{512}\approx0.045$，绝对误差随尺度一起变小。实测每行长度在 $0.99999994$ 到 $1.0$ 之间，与参考向量的余弦相似度不低于 $0.99999994$。\texttt{batch} 阶段重排并重复了输入，误差与 \texttt{output} 同量级，说明输出逐行跟随输入排列，样本之间没有共享状态。
 
-\texttt{output} 的绝对误差反而最小，$5.960\times10^{-7}$，比中间 token 低两个数量级。这并不表示最终算得更准，而是 L2 归一化把每行缩到长度 1 之后，元素幅值只有 $1/\sqrt{512}\approx0.044$，绝对误差随尺度一起变小。实测每行长度在 $0.99999994$ 到 $1.0$ 之间，与参考向量的余弦相似度不低于 $0.99999994$。\texttt{batch} 阶段换了顺序、重复了图像，误差与 \texttt{output} 同量级，说明输出逐行跟随输入排列，样本之间没有共享状态。
+\section{讨论}
 
-除了误差，检查还要求输出是有限值、\texttt{float32} 类型、形状为 $[B,512]$。\texttt{run.py} 保存结果时还会再查一遍。
+\subsection{缩放因子导致的类型提升}
 
-\section{问题与讨论}
+注意力缩放最初写成 \verb|scores / np.sqrt(self.head_dim)|。\texttt{head\_dim} 是 Python 整数，\verb|np.sqrt| 对它返回 \texttt{float64} 标量，而 \texttt{float32} 数组与更高精度的标量相除会被提升，整个分数矩阵变成 \texttt{float64}，一路传下去，最终输出也不再是 \texttt{float32}。改法是把除数先转成 \texttt{float32} 再开方，因子仍是 8，数值不变，类型保持 \texttt{float32}。
 
-\subsection{缩放因子带来的类型提升}
-
-注意力缩放最初写成 \verb|scores / np.sqrt(self.head_dim)|。\texttt{head\_dim} 是 Python 整数，\verb|np.sqrt| 对它返回 \texttt{float64} 标量，而 NumPy 中 \texttt{float32} 数组与更高精度的标量相除会被提升，整个分数矩阵变成 \texttt{float64}，一路传下去，最终输出也不再是 \texttt{float32}。
-
-修改的方法是把除数先转成 \texttt{float32} 再开方。因子仍然是 $8$，数值不变，类型保持 \texttt{float32}。
-
-这个错误在误差表上看不出来。我按 \texttt{float64} 重算了整条前向，输出与参考的最大差只有 $1.32\times10^{-7}$，数值容差完全能过，但类型检查会直接判失败。验收看的不只是数值接近，还有接口上的约定。
+这个错误在误差表上看不出来。我按 \texttt{float64} 重算过整条前向，与参考的最大差只有 $1.32\times10^{-7}$，容差完全能过，但类型检查会直接判失败。可见验收看的不只是数值接近，还有接口上的约定。
 
 \subsection{张量轴序与权重方向}
 
-三处涉及张量方向，需要分别判断，不能套同一个写法。第一处是 $k$ 的转置：它是四维数组，\texttt{k.T} 会颠倒全部四个轴，\texttt{q @ k.T} 直接抛 \texttt{ValueError}，只能用 \texttt{transpose} 交换最后两轴，保留 batch 轴和 head 轴。第二处是 MLP 第二层，\texttt{c\_proj.weight} 存成 $[768,3072]$，要与 $[B,50,3072]$ 的输入相乘，必须转置成 $[3072,768]$，漏写 \texttt{.T} 同样报形状错误。第三处是最终投影，\texttt{visual.proj} 已经是 $[768,512]$，可以直接相乘，若照着 block 的写法加上 \texttt{.T} 反而会出错。
+有三处涉及张量方向，需要分别判断。第一处是 $k$ 的转置，四维数组用 \texttt{transpose} 只换最后两轴，保留 batch 轴和 head 轴。第二处是 MLP 第二层，权重存成 $[768,3072]$，要与 $[B,50,3072]$ 的输入相乘，必须转置成 $[3072,768]$，漏写 \texttt{.T} 会报形状错误。第三处是最终投影，\texttt{visual.proj} 已经是 $[768,512]$，可以直接相乘，照着 block 的写法加 \texttt{.T} 反而会错。
 
-同样是“权重方向”，只有这一处不需要转置，逐个核对形状比套用统一写法可靠。实验本身也有局限：只验证了课程给的 10 张图和 3 种 batch 组合，没测非标准尺寸或异常输入；GELU 用逐元素循环实现，$B=10$ 时尚可接受，批量更大时要换成向量化写法。
+实验也有局限：只验证了课程给的 10 张图和 3 种 batch 组合，没有测非标准尺寸或异常输入；GELU 用逐元素循环实现，$B=10$ 时够用，批量更大时需要换成向量化的写法。
 
-\section{总结}
+\section{实验总结}
 
-这次实验把 ViT 的前向计算从公式落到了具体的数组操作上。真正花时间的是把每一步的形状和轴序对上：切块的六轴 \texttt{reshape}、拆头的两次 \texttt{transpose}、合头的 \texttt{reshape}，写之前都要先想清楚每个轴代表什么。形状对了，数值自然就对了。另一个没想到的地方是类型：一次看起来无害的除法把输出变成了 \texttt{float64}，误差完全合格，还是被判失败。
+这次实验把 ViT 的前向计算从公式落到了具体的数组操作上。花时间最多的地方是把每一步的形状和轴序对上：切块的六轴 \texttt{reshape}、拆头时把 head 轴提前、合头时的 \texttt{reshape}，写之前都要先想清楚每个轴代表什么。另一个没想到的问题是数据类型，一次看起来无害的除法把输出变成了 \texttt{float64}，数值全对，还是被判失败。
 
-\section{个人贡献与协助}
+六个 TODO 都是我自己逐个写完的，动手前先按张量形状推出每一步的输入输出，再照着写乘加，写完用 \texttt{check.py} 分段核对。注意力缩放的类型问题是最后检查输出 dtype 时发现的，MLP 第二层漏掉的转置是对照权重形状补上的。过程中用 ChatGPT 和 Codex 理清了多头注意力和 MLP 的组织方式，也让它检查过 NumPy 写法是否符合项目风格，报告的排版是它帮忙调整的。课程提供的权重、预处理、辅助函数、检查脚本和参考数组都没有改动。
 
-六个 TODO 都是我逐个写的。动手前先按张量形状推出每一步的输入输出，再照着写乘加，写完用 \texttt{check.py} 逐段核对数值。注意力缩放的类型问题是最后检查输出 dtype 时发现的：原来的除法把 \texttt{float32} 提升成了 \texttt{float64}。MLP 第二层漏掉的转置是对照权重形状补上的。
-
-过程中用 ChatGPT 和 Codex 理清多头注意力和 MLP 的组织方式，也让它检查过 NumPy 写法是否符合项目风格；报告的排版和流程图也是它画的。课程提供的权重、预处理、辅助函数、检查脚本和参考数组都没有改动。
-
-{\raggedright\setlength{\parindent}{2em}
-提交的是 \texttt{image\_encoder.py}、README 和这份报告。执行 \texttt{python run.py -{}-output output\_tokens.npz} 生成结果，按输入顺序保存 10 张图的 ID 与 512 维特征。代码在 \url{https://github.com/ach3rry/project1-vit-numpy}。\par}
+提交的内容包括 \texttt{image\_encoder.py}、README 和这份报告。执行 \texttt{python run.py} 会生成 \texttt{output\_tokens.npz}，按输入顺序保存 10 张图的 ID 和 512 维特征。
 
 \newpage
 
