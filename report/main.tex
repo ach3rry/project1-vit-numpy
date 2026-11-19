@@ -109,7 +109,7 @@ ViT-B/32 把图像当作 token 序列处理。$224\times 224$ 的图像按 $32\t
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.95\linewidth]{project1_forward.png}
-    \caption{图像编码器的前向流程，每步标注了张量形状，$B$ 为图像数}
+    \caption{图像编码器的前向流程。红框为本次补全的部分，蓝框为课程提供的计算，括号内是张量形状}
     \label{fig:forward}
 \end{figure}
 
@@ -140,7 +140,7 @@ MLP 由两层线性变换组成，中间维度 3072，激活函数用精确 GELU
 
 \section{实验步骤}
 
-实现集中在 \texttt{image\_encoder.py} 的三个类里：\texttt{ImageEncoder} 负责切块、嵌入和输出头，\texttt{MultiHeadAttention} 负责拆头和注意力，\texttt{TransformerBlock} 负责残差与 MLP。下面按前向顺序说明。
+先把实现跑通：在项目目录下用自带的虚拟环境装好 \texttt{requirements.txt}，执行 \texttt{python check.py -{}-stage all} 逐阶段验收，再用 \texttt{python run.py} 生成 \texttt{output\_tokens.npz}。实现集中在 \texttt{image\_encoder.py} 的三个类里，\texttt{ImageEncoder} 负责切块、嵌入和输出头，\texttt{MultiHeadAttention} 负责拆头和注意力，\texttt{TransformerBlock} 负责残差与 MLP。下面的代码摘自该文件，只去掉了注释。
 
 \subsection{图块切分与嵌入}
 
@@ -150,6 +150,11 @@ MLP 由两层线性变换组成，中间维度 3072，激活函数用精确 GELU
 x = images.reshape(B, 3, 7, 32, 7, 32)
 x = x.transpose(0, 2, 4, 1, 3, 5)
 return x.reshape(B, 49, 3072)
+
+tokens = patches @ self.patch_weight.T
+cls = np.repeat(self.cls, images.shape[0], axis=0)
+tokens = np.concatenate((cls, tokens), axis=1)
+tokens += self.position
 \end{verbatim}
 
 嵌入是一层无偏置的线性投影，把每个图块从 3072 维映射到 768 维。CLS 只有一行，用 \texttt{np.repeat} 复制到 batch 大小，再沿 token 轴拼在图块前面。位置编码形状是 $[50,768]$，没有 batch 轴，与 $[B,50,768]$ 相加时由 NumPy 广播，每张图共用同一套位置参数。
@@ -162,9 +167,13 @@ return x.reshape(B, 49, 3072)
 
 \begin{verbatim}
 k_t = k.transpose(0, 1, 3, 2)
-scores = q @ k_t / np.sqrt(np.float32(self.head_dim))
+scores = q @ k_t
+scores = scores / np.sqrt(np.float32(self.head_dim))
 coefficients = attention_weights(scores)
-context = (coefficients @ v).transpose(0, 2, 1, 3)
+
+context = coefficients @ v
+context = context.transpose(0, 2, 1, 3)
+B, N, D = x.shape
 merged = context.reshape(B, N, D)
 output = merged @ self.out_weight.T + self.out_bias
 \end{verbatim}
@@ -174,10 +183,11 @@ output = merged @ self.out_weight.T + self.out_bias
 block 按式~\eqref{eq:block} 的顺序算：先对输入做第一次归一化进入注意力，结果加回原输入得到 \texttt{residual}；再对 \texttt{residual} 做第二次归一化，过 MLP 后加回 \texttt{residual}。两条残差都保持 $[B,50,768]$。MLP 第一层把 768 维扩到 3072 维，GELU 之后第二层缩回 768 维，这一层的权重按 $[\text{out},\text{in}]$ 存放，相乘前要转置。
 
 \begin{verbatim}
-update = self.attn(self.norm1(x))
+update = self.attention(self.norm1(x), causal=causal)
 residual = x + update
 u = self.norm2(residual)
-hidden = self.gelu(u @ self.fc1_weight.T + self.fc1_bias)
+hidden = u @ self.fc1_weight.T + self.fc1_bias
+hidden = self.gelu(hidden)
 mlp_update = hidden @ self.fc2_weight.T + self.fc2_bias
 return residual + mlp_update
 \end{verbatim}
@@ -189,7 +199,8 @@ return residual + mlp_update
 \begin{verbatim}
 cls = tokens[:, 0, :]
 cls = self.post_norm(cls)
-return unit_vector(cls @ self.projection)
+output = cls @ self.projection
+return unit_vector(output)
 \end{verbatim}
 
 \section{实验结果}
@@ -207,21 +218,24 @@ return unit_vector(cls @ self.projection)
     \centering
     \caption{各阶段输出相对参考数组的偏差}
     \label{tab:errors}
-    \small
-    \renewcommand{\arraystretch}{1.18}
-    \begin{tabular}{@{}l@{\hspace{1.6em}}c@{\hspace{1.2em}}r@{\hspace{2.2em}}r@{}}
+    \footnotesize
+    \renewcommand{\arraystretch}{1.25}
+    \begin{tabular}{@{}l@{\hspace{1em}}c@{\hspace{1em}}r@{\hspace{1.6em}}r@{\hspace{1.6em}}r@{}}
         \hline
-        阶段 & 输出形状 & 最大绝对误差 & 平均绝对误差 \\
+        阶段 & 输出形状 & 最大误差 & 平均误差 & 相对 L2 误差 \\
         \hline
-        \texttt{preprocess}   & $[10,3,224,224]$ & $0$ & $0$ \\
-        \texttt{patches}      & $[2,49,3072]$    & $0$ & $0$ \\
-        \texttt{tokens}       & $[2,50,768]$     & $4.578\times10^{-5}$ & $1.321\times10^{-6}$ \\
-        \texttt{block0}       & $[2,50,768]$     & $6.109\times10^{-6}$ & $3.322\times10^{-7}$ \\
-        \texttt{last\_tokens} & $[2,50,768]$     & $4.101\times10^{-5}$ & $2.748\times10^{-6}$ \\
-        \texttt{output}       & $[10,512]$       & $5.960\times10^{-7}$ & $8.427\times10^{-8}$ \\
-        \texttt{batch}        & $[3,512]$        & $4.657\times10^{-7}$ & $7.892\times10^{-8}$ \\
+        \texttt{preprocess}   & $[10,3,224,224]$ & $0$ & $0$ & $0$ \\
+        \texttt{patches}      & $[2,49,3072]$    & $0$ & $0$ & $0$ \\
+        \texttt{tokens}       & $[2,50,768]$     & $4.578\times10^{-5}$ & $1.321\times10^{-6}$ & $1.18\times10^{-6}$ \\
+        \texttt{block0}       & $[2,50,768]$     & $6.109\times10^{-6}$ & $3.322\times10^{-7}$ & $2.22\times10^{-6}$ \\
+        \texttt{last\_tokens} & $[2,50,768]$     & $4.101\times10^{-5}$ & $2.748\times10^{-6}$ & $4.34\times10^{-6}$ \\
+        \texttt{output}       & $[10,512]$       & $5.960\times10^{-7}$ & $8.427\times10^{-8}$ & $2.48\times10^{-6}$ \\
+        \texttt{batch}        & $[3,512]$        & $4.657\times10^{-7}$ & $7.892\times10^{-8}$ & $2.34\times10^{-6}$ \\
         \hline
     \end{tabular}
+
+    \vspace{2pt}
+    {\footnotesize 误差均取绝对值。容差为内部 token $\mathrm{atol}=2\times10^{-4}$，输出 $\mathrm{atol}=2\times10^{-5}$、$\mathrm{rtol}=2\times10^{-4}$。}
 \end{table}
 
 检查按前向顺序分段：\texttt{preprocess} 验预处理，\texttt{patches} 验切块顺序，\texttt{tokens} 验嵌入，\texttt{block0} 把 12 层压到一层单独查，\texttt{last\_tokens} 验整条主干，\texttt{output} 验最终向量，\texttt{batch} 把输入顺序改成 $[1,0,1]$ 再逐行对照。前一阶段通过、后一阶段失败，问题就落在两者之间。
@@ -236,17 +250,17 @@ return unit_vector(cls @ self.projection)
 
 注意力缩放最初写成 \verb|scores / np.sqrt(self.head_dim)|。\texttt{head\_dim} 是 Python 整数，\verb|np.sqrt| 对它返回 \texttt{float64} 标量，而 \texttt{float32} 数组与更高精度的标量相除会被提升，整个分数矩阵变成 \texttt{float64}，一路传下去，最终输出也不再是 \texttt{float32}。改法是把除数先转成 \texttt{float32} 再开方，因子仍是 8，数值不变，类型保持 \texttt{float32}。
 
-这个错误在误差表上看不出来。我按 \texttt{float64} 重算过整条前向，与参考的最大差只有 $1.32\times10^{-7}$，容差完全能过，但类型检查会直接判失败。可见验收看的不只是数值接近，还有接口上的约定。
+这个错误在误差表上看不出来。我按 \texttt{float64} 重算过整条前向，与参考的最大差只有 $1.32\times10^{-7}$，容差完全能过，但类型检查会直接判失败。数值和类型是两条独立的判据，前一条过了，后一条照样能卡住。
 
 \subsection{张量轴序与权重方向}
 
 有三处涉及张量方向，需要分别判断。第一处是 $k$ 的转置，四维数组用 \texttt{transpose} 只换最后两轴，保留 batch 轴和 head 轴。第二处是 MLP 第二层，权重存成 $[768,3072]$，要与 $[B,50,3072]$ 的输入相乘，必须转置成 $[3072,768]$，漏写 \texttt{.T} 会报形状错误。第三处是最终投影，\texttt{visual.proj} 已经是 $[768,512]$，可以直接相乘，照着 block 的写法加 \texttt{.T} 反而会错。
 
-实验也有局限：只验证了课程给的 10 张图和 3 种 batch 组合，没有测非标准尺寸或异常输入；GELU 用逐元素循环实现，$B=10$ 时够用，批量更大时需要换成向量化的写法。
+检查覆盖的只有课程给的 10 张图和 3 种 batch 组合，非标准尺寸和异常输入都没有试过。另外 GELU 是逐元素循环，$B=10$ 时够用，批量再大就该换成向量化写法。
 
 \section{实验总结}
 
-这次实验把 ViT 的前向计算从公式落到了具体的数组操作上。花时间最多的地方是把每一步的形状和轴序对上：切块的六轴 \texttt{reshape}、拆头时把 head 轴提前、合头时的 \texttt{reshape}，写之前都要先想清楚每个轴代表什么。另一个没想到的问题是数据类型，一次看起来无害的除法把输出变成了 \texttt{float64}，数值全对，还是被判失败。
+ViT 的前向以前只在结构图上见过，这次是自己用数组乘加拼出来的。花时间最多的地方是把每一步的形状和轴序对上：切块的六轴 \texttt{reshape}、拆头时把 head 轴提前、合头时的 \texttt{reshape}，写之前都要先想清楚每个轴代表什么。另一个没想到的问题是数据类型，一次看起来无害的除法把输出变成了 \texttt{float64}，数值全对，还是被判失败。
 
 六个 TODO 都是我自己逐个写完的，动手前先按张量形状推出每一步的输入输出，再照着写乘加，写完用 \texttt{check.py} 分段核对。注意力缩放的类型问题是最后检查输出 dtype 时发现的，MLP 第二层漏掉的转置是对照权重形状补上的。过程中用 ChatGPT 和 Codex 理清了多头注意力和 MLP 的组织方式，也让它检查过 NumPy 写法是否符合项目风格，报告的排版是它帮忙调整的。课程提供的权重、预处理、辅助函数、检查脚本和参考数组都没有改动。
 
