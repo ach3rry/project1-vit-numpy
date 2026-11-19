@@ -206,8 +206,6 @@
     \label{fig:vit-arch}
 \end{figure}
 
-图中已标出各步的张量形状，下面按执行顺序说明实现。
-
 \section{实现}
 
 六个 TODO 分在三个类里。切块、嵌入和输出头在 \texttt{ImageEncoder}，拆头与注意力在 \texttt{MultiHeadAttention}，残差和 MLP 在 \texttt{TransformerBlock}。下面按执行顺序说明，代码取自文件中的实际实现。
